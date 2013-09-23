@@ -3,7 +3,15 @@
 
 import groovy.json.*
 
-API = 'https://coveralls.io/api/v1/jobs'
+@Grab(group='org.codehaus.groovy.modules.http-builder', module='http-builder', version='0.5.0-RC2')
+
+import groovyx.net.http.HTTPBuilder
+import static groovyx.net.http.ContentType.URLENC
+
+API_HOST = 'https://coveralls.io'
+API_PATH = '/api/v1/jobs'
+
+COBERTURA_REPORT_PATH = 'build/reports/cobertura/coverage.xml'
 
 // model for coveralls io report's source file report
 class SourceReport {
@@ -101,14 +109,36 @@ class ServiceInfoFactory {
 
 }
 
-def main() {
+void postToCoveralls(String json) {
+    def http = new HTTPBuilder(API_HOST)
+
+    http.post(path: API_PATH, body: [json_file: json], requestContentType: URLENC) { resp ->
+        println resp.getClass()
+    }
+}
+
+void main() {
     ServiceInfo serviceInfo = ServiceInfoFactory.createFromEnvVar()
 
-    List<SourceReport> sourceReports = SourceReportFactory.createFromCoberturaXML new File('sample.xml')
+    if (serviceInfo == null) {
+        println 'no available service'
+
+        return
+    }
+
+    File file = new File(COBERTURA_REPORT_PATH)
+
+    if (!file.exists()) {
+        println 'covertura report not available: ' + file.absolutePath
+
+        return
+    }
+
+    List<SourceReport> sourceReports = SourceReportFactory.createFromCoberturaXML file
 
     Report rep = new Report(serviceInfo.serviceName, serviceInfo.serviceJobId, sourceReports)
 
-    println rep.toJson()
+    postToCoveralls(rep.toJson())
 }
 
 main()
