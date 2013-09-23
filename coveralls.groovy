@@ -4,14 +4,19 @@
 import groovy.json.*
 
 @Grab(group='org.codehaus.groovy.modules.http-builder', module='http-builder', version='0.5.0-RC2')
-
 import groovyx.net.http.HTTPBuilder
-import static groovyx.net.http.ContentType.URLENC
+
+import static groovyx.net.http.Method.POST
+
+@Grab(group='org.apache.httpcomponents', module='httpmime', version='4.3') 
+import org.apache.http.entity.mime.MultipartEntityBuilder
+import org.apache.http.entity.ContentType
 
 API_HOST = 'https://coveralls.io'
 API_PATH = '/api/v1/jobs'
 
 COBERTURA_REPORT_PATH = 'build/reports/cobertura/coverage.xml'
+
 
 // model for coveralls io report's source file report
 class SourceReport {
@@ -43,8 +48,7 @@ class Report {
     }
 
     public String toJson() {
-        JsonBuilder json = new JsonBuilder()
-        json this
+        JsonBuilder json = new JsonBuilder(this)
         return json.toString()
     }
 }
@@ -68,14 +72,14 @@ class SourceReportFactory {
         List<SourceReport> reports = new ArrayList<SourceReport>()
 
         a.each { String filename, Map cov ->
-            def max = cov.max { it.key }
+            String source = new File(sourceDir + filename).text
 
-            List r = [null] * max.key
+            List r = [null] * source.readLines().size()
             cov.each { Integer line, Integer hits ->
                 r[line] = hits
             }
 
-            reports.add new SourceReport(filename, new File(sourceDir + filename).text, r)
+            reports.add new SourceReport(filename, source, r)
         }
 
         return reports
@@ -110,10 +114,26 @@ class ServiceInfoFactory {
 }
 
 void postToCoveralls(String json) {
-    def http = new HTTPBuilder(API_HOST)
 
-    http.post(path: API_PATH, body: [json_file: json], requestContentType: URLENC) { resp ->
-        println resp.getClass()
+    HTTPBuilder http = new HTTPBuilder(API_HOST + API_PATH)
+
+    http.request(POST) { req ->
+
+        req.entity = MultipartEntityBuilder.create().addBinaryBody('json_file', json.getBytes('UTF-8'), ContentType.APPLICATION_JSON, 'json_file').build()
+
+        response.success = { resp, reader ->
+            println resp.statusLine
+            println resp.getAllHeaders()
+            println resp.getData()
+            System.out << reader
+        }
+
+        response.failure = { resp, reader ->
+            println resp.statusLine
+            println resp.getAllHeaders()
+            println resp.getData()
+            System.out << reader
+        }
     }
 }
 
@@ -126,6 +146,9 @@ void main() {
         return
     }
 
+    println 'service name: ' + serviceInfo.serviceName
+    println 'service job id: ' + serviceInfo.serviceJobId
+
     File file = new File(COBERTURA_REPORT_PATH)
 
     if (!file.exists()) {
@@ -134,11 +157,15 @@ void main() {
         return
     }
 
+    println 'cobertura report file: ' + file.absolutePath
+
     List<SourceReport> sourceReports = SourceReportFactory.createFromCoberturaXML file
 
     Report rep = new Report(serviceInfo.serviceName, serviceInfo.serviceJobId, sourceReports)
 
-    postToCoveralls(rep.toJson())
+    println rep.toJson()
+
+    postToCoveralls rep.toJson()
 }
 
 main()
